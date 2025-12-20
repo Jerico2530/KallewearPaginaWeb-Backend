@@ -1,0 +1,6 @@
+@ApiRopa_HostAddress = http://localhost:5110
+
+GET {{ApiRopa_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

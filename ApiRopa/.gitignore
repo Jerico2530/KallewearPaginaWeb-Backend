@@ -1,0 +1,14 @@
+## Carpetas generadas por .NET
+bin/
+obj/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+
+## Logs
+*.log
+
+## Configuración local
+appsettings.Development.json
