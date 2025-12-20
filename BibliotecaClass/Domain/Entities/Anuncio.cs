@@ -1,0 +1,26 @@
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace BiblotecaWeb.Domain.Entities
+{
+    public  class Anuncio
+    {
+        [Key]
+        public int AnuncioId { get; set; }
+        public string Titulo { get; set; }
+        public string Descripcion { get; set; }
+        public string Imagen { get; set; }
+        [DataType(DataType.Date)]
+        public DateTime FechaInicio { get; set; }
+        [DataType(DataType.Date)]
+        public DateTime FechaFinal { get; set; }
+        public int Orden { get; set; }
+        public bool Estado { get; set; }
+        public DateTime FechaRegistro { get; set; } = DateTime.Now;
+
+    }
+}
