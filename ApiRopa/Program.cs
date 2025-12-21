@@ -46,7 +46,6 @@ using BiblotecaWeb.Domain.Validacion.OrdenDetalle;
 using BiblotecaWeb.Domain.Validacion.Producto;
 using BiblotecaWeb.Domain.Validacion.ProductoTalla;
 using BiblotecaWeb.Domain.Validacion.Talla;
-using BiblotecaWeb.Model;
 using BiblotecaWeb.Model.Dto;
 using BiblotecaWeb.Model.Validacion.Anuncio;
 using BiblotecaWeb.Model.Validacion.CarritoCompra;
