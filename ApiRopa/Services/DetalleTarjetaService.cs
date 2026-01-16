@@ -72,7 +72,7 @@ public class DetalleTarjetaService : IDetalleTarjetaService
         {
             _logger.LogInformation("🔍 Obteniendo todos los detalleTarjetas activos...");
 
-            var DetalleTarjetaes = await _DetalleTarjetaRepo.ObtenerDetalleTarjetasConDetalles();
+            var DetalleTarjetaes = await _DetalleTarjetaRepo.ObtenerTodo();
             // Validar si hay resultados
             if (DetalleTarjetaes == null || !DetalleTarjetaes.Any())
             {
@@ -134,7 +134,7 @@ public class DetalleTarjetaService : IDetalleTarjetaService
     {
         try
         {
-            var detalleTarjetas = await _DetalleTarjetaRepo.ObtenerDetalleTarjetasConDetalles();
+            var detalleTarjetas = await _context.DetalleTarjetas.ToListAsync();
             var detalleTarjetasDto = _mapper.Map<List<DetalleTarjetaDto>>(detalleTarjetas);
 
             // Excluir propiedades sensibles o imágenes al exportar Excel

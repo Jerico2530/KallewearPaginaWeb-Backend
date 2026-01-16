@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using BiblotecaClass.Domain.Entities;
+using System.ComponentModel.DataAnnotations;
 
 namespace BiblotecaWeb.Domain.Entities;
 
@@ -12,4 +13,5 @@ public class MedioPago
     public bool Estado { get; set; }
     public DateTime FechaRegistro { get; set; } = DateTime.Now;
     public ICollection<Pago> Pagos { get; set; } = new List<Pago>();
+    public ICollection<InfoTarjetas> InfomaTarjetas { get; set; } = new List<InfoTarjetas>();
 }

@@ -12,8 +12,6 @@ namespace BiblotecaWeb.Domain.Validacion.DetalleTarjeta
     {
         public DetalleTarjetaCreateValidacion()
         {
-            RuleFor(x => x.PagoId)
-                .GreaterThan(0).WithMessage("Debe seleccionar un producto válido.");
 
             RuleFor(x => x.NumeroTarjeta)
                 .NotEmpty().WithMessage("El Numero Tarjeta  es obligatorio.")

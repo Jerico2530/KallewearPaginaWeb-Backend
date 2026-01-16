@@ -1,4 +1,6 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using BiblotecaClass.Domain.Dto.CarritoCompra;
+using BiblotecaClass.Domain.Dto.Pago;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace BiblotecaWeb.Domain.Entities;
@@ -22,6 +24,7 @@ public class CarritoCompra
     public decimal TotalCarrito { get; set; }
     public bool Estado { get; set; }
     public DateTime FechaRegistro { get; set; } = DateTime.Now;
+
 
 
 }

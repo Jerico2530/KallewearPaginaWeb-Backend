@@ -45,5 +45,10 @@ public interface ICarritoCompraRepositorio : IRepositorio<CarritoCompra>
     //Obtiene el ID del usuario invitado actual (depende de la implementación de invitado).
     Task<int> ObtenerIdInvitadoActualAsync();
 
+    Task<CarritoCompra> CrearAsync(CarritoCompra carrito);
+
+    Task EliminarItemAsync(int carritoId);
+
+
 }
 

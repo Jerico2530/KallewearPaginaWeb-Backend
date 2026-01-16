@@ -3,6 +3,7 @@ using ApiRopa.Models.Dtos;
 using ApiRopa.Models.Responses;
 using ApiRopa.Repositorio.IRepositorio;
 using ApiRopa.Security.Auth;
+using ApiRopa.Services.Help;
 using ApiRopa.Services.IServices;
 using AutoMapper;
 using BiblotecaWeb.Domain.Dto.Usuario;
@@ -44,15 +45,16 @@ namespace ApiRopa.Services
         private readonly PasswordHasher _passwordHasher;
         private readonly IValidator<UsuarioLoginDto> _loginValidator;
         private readonly ICarritoCompraRepositorio _carritoRepo;
+        private readonly IProductoTallaRepositorio _productoTallaRepo;
 
         public LoginService(
-            IUsuarioRepositorio usuarioRepo,IMapper mapper,ILogger<LoginService> logger, JwtService utilidades, IValidator<UsuarioLoginDto> loginValidator, ICarritoCompraRepositorio carritoRepo , PasswordHasher passwordHasher)
+            IUsuarioRepositorio usuarioRepo,IMapper mapper,ILogger<LoginService> logger, JwtService utilidades, IValidator<UsuarioLoginDto> loginValidator, ICarritoCompraRepositorio carritoRepo , PasswordHasher passwordHasher , IProductoTallaRepositorio productoTallaRepo)
         {
             _usuarioRepo = usuarioRepo;
             _mapper = mapper;
             _logger = logger;
             _utilidades = utilidades;
-
+            _productoTallaRepo= productoTallaRepo;
             _carritoRepo = carritoRepo;
             _loginValidator = loginValidator;
             _passwordHasher = passwordHasher;
@@ -63,10 +65,8 @@ namespace ApiRopa.Services
         {
             _logger.LogInformation("🔄 Migrando carrito desde Invitado {0} → Usuario {1}", invitadoId, usuarioRealId);
 
-            // Traer items del invitado SIN tracking para evitar problemas de EF
-            var carritoInvitado = await _carritoRepo.ObtenerTodos(c =>
-                c.UsuarioId == invitadoId && c.Estado == true
-            ); // asegúrate que tu repo use AsNoTracking aquí
+            // Traer todos los ítems del invitado (sin tracking)
+            var carritoInvitado = await _carritoRepo.ObtenerTodos(c => c.UsuarioId == invitadoId && c.Estado == true);
 
             if (!carritoInvitado.Any())
             {
@@ -76,7 +76,7 @@ namespace ApiRopa.Services
 
             foreach (var item in carritoInvitado)
             {
-                // Verificar si el producto ya existe para el usuario real y actualizar cantidades
+                // Verificar si el producto ya existe en el usuario real
                 var existe = await _carritoRepo.Obtener(c =>
                     c.UsuarioId == usuarioRealId &&
                     c.ProductoTallaId == item.ProductoTallaId &&
@@ -85,19 +85,14 @@ namespace ApiRopa.Services
 
                 if (existe != null)
                 {
-                    // Sumamos cantidades y recalculamos subtotal
+                    // Sumar cantidad y actualizar subtotales
                     existe.Cantidad += item.Cantidad;
                     existe.SubTotal = existe.Cantidad * existe.PrecioUnitario;
-
-                    // Actualizamos el registro existente del usuario real
                     await _carritoRepo.Actualizar(existe);
-
-                    // Crear un nuevo registro para el usuario real y eliminar el antiguo del invitado
-                    await _carritoRepo.Remover(item);
                 }
                 else
                 {
-                    // Crear un nuevo registro con los datos del invitado pero asignado al usuario real
+                    // Crear nuevo item para usuario real
                     var nuevoItem = new CarritoCompra
                     {
                         UsuarioId = usuarioRealId,
@@ -105,23 +100,19 @@ namespace ApiRopa.Services
                         Cantidad = item.Cantidad,
                         PrecioUnitario = item.PrecioUnitario,
                         SubTotal = item.Cantidad * item.PrecioUnitario,
-                        Estado = item.Estado
+                        Estado = true
                     };
 
                     await _carritoRepo.Crear(nuevoItem);
-
-                    // Eliminar el item del invitado
-                    await _carritoRepo.Remover(item);
                 }
+
+                // Eliminar el item del invitado (sin afectar stock)
+                await _carritoRepo.Remover(item);
             }
 
-            // Recalcular el total del carrito del usuario real
             decimal totalCarrito = await _carritoRepo.CalcularTotalAsync(usuarioRealId);
-            _logger.LogInformation("✅ Carrito migrado exitosamente. Total actualizado: {0}", totalCarrito);
+            _logger.LogInformation("✅ Carrito migrado correctamente. Total actualizado: {0}", totalCarrito);
         }
-
-
-
 
 
 
@@ -139,11 +130,9 @@ namespace ApiRopa.Services
                 if (!validation.IsValid)
                     return ResponseHelper.Fail<LoginResultDto>(validation.Errors);
 
-                // Validación básica
                 if (loginDto == null || string.IsNullOrWhiteSpace(loginDto.CorreoElectronico) || string.IsNullOrWhiteSpace(loginDto.Contraseña))
                     return ResponseHelper.Fail<LoginResultDto>("Correo y contraseña son obligatorios.");
 
-                // Buscar usuario activo
                 var usuario = await _usuarioRepo.Obtener(
                     u => u.CorreoElectronico == loginDto.CorreoElectronico && u.Estado,
                     include: q => q.Include(x => x.UserRoles)
@@ -155,18 +144,17 @@ namespace ApiRopa.Services
                 if (usuario == null)
                     return ResponseHelper.Fail<LoginResultDto>("Usuario no encontrado o inactivo.", "CorreoElectronico", HttpStatusCode.Unauthorized);
 
-
-                // Verificar contraseña
                 if (!_passwordHasher.VerificarPassword(loginDto.Contraseña, usuario.Contraseña))
                     return ResponseHelper.Fail<LoginResultDto>("Contraseña incorrecta.", "Contraseña", HttpStatusCode.Unauthorized);
 
+                // Migrar carrito de invitado si existe
                 int invitadoId = await _carritoRepo.ObtenerIdInvitadoActualAsync();
                 if (invitadoId != 0 && invitadoId != usuario.UsuarioId)
                 {
                     await MigrarCarritoAsync(invitadoId, usuario.UsuarioId);
                 }
 
-                // Generar token JWT
+                // Generar JWT
                 string token = _utilidades.GenerarJWT(usuario.UsuarioId);
 
                 // Roles y permisos
@@ -182,7 +170,6 @@ namespace ApiRopa.Services
                     .Distinct()
                     .ToList();
 
-                // Construir DTO de respuesta
                 var resultado = new LoginResultDto
                 {
                     Token = token,
@@ -193,6 +180,7 @@ namespace ApiRopa.Services
                         ApellidoCompleto = usuario.ApellidoCompleto,
                         DNI = usuario.DNI,
                         CorreoElectronico = usuario.CorreoElectronico,
+                        Imagen = usuario.Imagen,
                         Roles = roles,
                         Permisos = permisos
                     }
@@ -203,7 +191,7 @@ namespace ApiRopa.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error durante el proceso de login.");
+                _logger.LogError(ex, "❌ Error durante login de usuario.");
                 return ResponseHelper.FailException<LoginResultDto>(ex);
             }
         }
@@ -252,6 +240,7 @@ namespace ApiRopa.Services
                         ApellidoCompleto = usuarioInvitado.ApellidoCompleto,
                         DNI = usuarioInvitado.DNI,
                         CorreoElectronico = usuarioInvitado.CorreoElectronico,
+                        Imagen = usuarioInvitado.Imagen,
                         Roles = roles,
                         Permisos = permisos
                     }

@@ -3,7 +3,6 @@
 public class DetalleTarjetaDto
 {
     public int DetalleTarjetaId { get; set; }
-    public int PagoId { get; set; }
 
     public string NumeroTarjeta { get; set; }
     public string FechaVencimiento { get; set; }

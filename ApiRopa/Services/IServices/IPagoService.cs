@@ -1,5 +1,6 @@
 ﻿using ApiRopa.Models.Responses;
 using BiblotecaWeb;
+using BiblotecaWeb.Domain.Dto.DetalleTarjeta;
 using BiblotecaWeb.Domain.Dto.Pago;
 using Microsoft.AspNetCore.JsonPatch;
 /*
@@ -27,7 +28,7 @@ public interface IPagoService
     Task<ApiResponse<PagoDto>> ObtenerPagoPorIdAsync(int id);
 
     // Registra un nuevo pago en el sistema
-    Task<ApiResponse<PagoDto>> CrearPagoAsync(PagoCreateDto dto);
+    Task<ApiResponse<PagoDto>> CrearPagoAsync(PagoCreateDto dto, int usuarioId);
 
     // Actualiza un pago existente reemplazando su información
     Task<ApiResponse<PagoDto>> ActualizarPagoAsync(int id, PagoUpdateDto updateDto);
@@ -40,4 +41,6 @@ public interface IPagoService
 
     // Exporta todos los pagos en formato Excel
     Task<ApiResponse<byte[]>> ExportarExcelPagosAsync();
+
+    Task<ApiResponse<List<PagoDto>>> ObtenerPagosPorUsuarioAsync(int usuarioId);
 }

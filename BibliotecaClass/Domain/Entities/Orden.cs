@@ -13,7 +13,7 @@ public class Orden
     public string MetodoEntrega { get; set; }
     public int? DireccionId { get; set; }
     public Direccion Direccion { get; set; }
-    public bool Estado { get; set; }
+    public bool? Estado { get; set; }
     public decimal? Total { get; set; }   
     public DateTime FechaRegistro { get; set; } = DateTime.Now;
     public ICollection<Pago> Pagos { get; set; } = new List<Pago>();

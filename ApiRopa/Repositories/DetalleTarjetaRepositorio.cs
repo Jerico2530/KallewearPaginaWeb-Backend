@@ -37,11 +37,5 @@ public class DetalleTarjetaRepositorio : Repositorio<DetalleTarjeta>, IDetalleTa
         return entidad;                     // Retorna la entidad actualizada
     }
     /// Obtiene todos los detalles de tarjetas incluyendo los pagos relacionados
-    public async Task<List<DetalleTarjeta>> ObtenerDetalleTarjetasConDetalles()
-    {
-        return await _db.DetalleTarjetas
-            .Include(ur => ur.Pago)       // Incluye la relación con la entidad Pago
-                .ToListAsync();               // Convierte a lista y devuelve
-    }
 }
 

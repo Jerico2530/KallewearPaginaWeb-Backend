@@ -1,4 +1,6 @@
 ﻿using AutoMapper;
+using BiblotecaClass.Domain.Dto.InfoTarjetas;
+using BiblotecaClass.Domain.Entities;
 using BiblotecaWeb;
 using BiblotecaWeb.Domain.Dto.Anuncio;
 using BiblotecaWeb.Domain.Dto.Categoria;
@@ -226,6 +228,16 @@ namespace ApiRopa.Mapping
             CreateMap<Direccion, DireccionCreateDto>().ReverseMap();
             CreateMap<Direccion, DireccionDto>().ReverseMap();
             CreateMap<Direccion, DireccionUpdateDto>().ReverseMap();
+
+            //InfoTarjeta
+            CreateMap<InfoTarjetas, InfoTarjetaCreateDto>().ReverseMap();
+            CreateMap<InfoTarjetas, InfoTarjetaDto>()
+    .ForMember(dest => dest.NumeroTarjeta, opt => opt.MapFrom(src => src.DetalleTarjeta.NumeroTarjeta))
+    .ForMember(dest => dest.FechaVencimiento, opt => opt.MapFrom(src => src.DetalleTarjeta.FechaVencimiento))
+    .ForMember(dest => dest.CVV, opt => opt.MapFrom(src => src.DetalleTarjeta.CVV))
+    .ForMember(dest => dest.DescripcionMedioPago, opt => opt.MapFrom(src => src.MedioPago.DescripcionMedioPago))
+    .ForMember(dest => dest.TipoPago, opt => opt.MapFrom(src => src.MedioPago.TipoPago.DescripcionTipoPago));
+            CreateMap<InfoTarjetas, InfoTarjetaUpdateDto>().ReverseMap();
 
         }
     }

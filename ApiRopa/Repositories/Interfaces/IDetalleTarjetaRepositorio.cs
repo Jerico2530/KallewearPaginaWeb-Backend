@@ -20,6 +20,5 @@ public interface IDetalleTarjetaRepositorio : IRepositorio<DetalleTarjeta>
 {
     /// Actualiza un detalle de tarjeta existente y devuelve la entidad actualizada.
     Task<DetalleTarjeta> ActualizarDetalleTarjeta(DetalleTarjeta entidad);
-    /// Obtiene la lista de detalles de tarjetas, incluyendo sus relaciones completas.
-    Task<List<DetalleTarjeta>> ObtenerDetalleTarjetasConDetalles();
+
 }

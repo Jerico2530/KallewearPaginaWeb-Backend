@@ -1,13 +1,19 @@
 ﻿using ApiRopa;
 using ApiRopa.Mapping;
+using ApiRopa.Repositories;
+using ApiRopa.Repositories.Interfaces;
 using ApiRopa.Repositorio;
 using ApiRopa.Repositorio.IRepositorio;
 using ApiRopa.Security.Attributes;
 using ApiRopa.Security.Auth;
 using ApiRopa.Services;
 using ApiRopa.Services.Dominio;
+using ApiRopa.Services.Hangfire;
 using ApiRopa.Services.IServices;
 using ApiRopa.Servicios;
+using BiblotecaClass.Domain.Dto.InfoTarjetas;
+using BiblotecaClass.Domain.Entities;
+using BiblotecaClass.Domain.Validacion.InfoTarjeta;
 using BiblotecaWeb;
 using BiblotecaWeb.Datos;
 using BiblotecaWeb.Domain.Dto.Anuncio;
@@ -52,11 +58,12 @@ using BiblotecaWeb.Model.Validacion.CarritoCompra;
 using BiblotecaWeb.Model.Validacion.Descuento;
 using FluentValidation;
 using FluentValidation.AspNetCore;
+using Hangfire;
+using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OfficeOpenXml;
-
 using System.Text;
 
 
@@ -82,6 +89,26 @@ builder.Services.AddDbContext<AppDbContext>(options =>
            .EnableSensitiveDataLogging()
            .LogTo(Console.WriteLine, Microsoft.Extensions.Logging.LogLevel.Debug)
 );
+
+builder.Services.AddHangfire(config =>
+{
+    config.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+          .UseSimpleAssemblyNameTypeSerializer()
+          .UseRecommendedSerializerSettings()
+          .UseSqlServerStorage(
+              builder.Configuration.GetConnectionString("DefaultConnection"),
+              new SqlServerStorageOptions
+              {
+                  CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+                  SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+                  QueuePollInterval = TimeSpan.FromSeconds(15),
+                  UseRecommendedIsolationLevel = true,
+                  DisableGlobalLocks = true
+              });
+});
+
+// 🔹 Servidor background
+builder.Services.AddHangfireServer();
 
 // 🧩 Integración con FluentValidation
 builder.Services.AddFluentValidationAutoValidation();
@@ -227,6 +254,11 @@ builder.Services.AddScoped<IValidator<DescuentoUpdateDto>, DescuentoUpdateValida
 builder.Services.AddScoped<IValidator<int>, DescuentoGetValidacion>();
 builder.Services.AddScoped<IValidator<int>, DescuentoDeleteValidacion>();
 
+builder.Services.AddScoped<IValidator<InfoTarjetaCreateDto>, InfoTarjetaCreateValidacion>();
+builder.Services.AddScoped<IValidator<InfoTarjetaUpdateDto>, InfoTarjetaUpdateValidacion>();
+builder.Services.AddScoped<IValidator<int>, InfoTarjetaGetValidacion>();
+builder.Services.AddScoped<IValidator<int>, InfoTarjetaDeleteValidacion>();
+
 builder.Services.AddScoped<IValidator<UsuarioLoginDto>, LoginCreateValidacion>();
 
 
@@ -266,6 +298,7 @@ builder.Services.AddScoped<ITipoPagoRepositorio, TipoPagoRepositorio>();
 builder.Services.AddScoped<IMedioPagoRepositorio, MedioPagoRepositorio>();
 builder.Services.AddScoped<IDetalleTarjetaRepositorio, DetalleTarjetaRepositorio>();
 builder.Services.AddScoped<IDireccionRepositorio, DireccionRepositorio>();
+builder.Services.AddScoped<IInfoTarjetaRepositorio, InfoTarjetaRepositorio>();
 
 
 
@@ -302,10 +335,9 @@ builder.Services.AddScoped<IMedioPagoService, MedioPagoService>();
 builder.Services.AddScoped<IDetalleTarjetaService, DetalleTarjetaService>();
 builder.Services.AddScoped<IDireccionService, DireccionService>();
 builder.Services.AddScoped<IDescuentoService, DescuentoService>();
+builder.Services.AddScoped<IInfoTarjetaServices, InfoTarjetaServices>();
 builder.Services.AddScoped<CarritoServicioDominio>();
-builder.Services.AddScoped<ILoginService, LoginService>();
-
-
+builder.Services.AddScoped<LimpiezaStockReservadoService>();
 
 
 
@@ -341,6 +373,8 @@ builder.Services.AddAuthentication(config =>
 });
 var app = builder.Build();
 
+app.UseHangfireDashboard("/hangfire");
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -356,6 +390,14 @@ app.UseStaticFiles();
 app.UseAuthentication(); 
 app.UseAuthorization();
 
+app.UseHangfireDashboard("/hangfire");
+
 app.MapControllers();
+
+RecurringJob.AddOrUpdate<LimpiezaStockReservadoService>(
+    "limpieza-stock-reservado",
+    service => service.LimpiarReservasAsync(5), // minutos
+    Cron.MinuteInterval(5)
+);
 
 app.Run();

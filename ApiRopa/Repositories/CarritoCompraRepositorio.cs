@@ -77,6 +77,9 @@ namespace ApiRopa
         {
             return await _db.CarritoCompras
                 .AsNoTracking()
+                .Where(c => c.UsuarioId == usuarioId) // 🔥 FILTRO CLAVE
+                .Include(c => c.Usuario)
+                .Include(c => c.Orden)
                 .Include(c => c.ProductoTalla)
                     .ThenInclude(pt => pt.Producto)
                         .ThenInclude(p => p.Moneda)
@@ -85,10 +88,9 @@ namespace ApiRopa
                         .ThenInclude(p => p.Genero)
                 .Include(c => c.ProductoTalla)
                     .ThenInclude(pt => pt.Talla)
-                .Include(c => c.Usuario)
-                .Where(c => c.UsuarioId == usuarioId && c.OrdenId == null)
                 .ToListAsync();
         }
+
         /// Elimina todos los carritos de un usuario
         public async Task VaciarCarritoPorUsuarioAsync(int usuarioId)
         {
@@ -160,6 +162,25 @@ namespace ApiRopa
                 query = query.AsNoTracking();
 
             return await query.FirstOrDefaultAsync(filtro);
+        }
+
+        public async Task<CarritoCompra> CrearAsync(CarritoCompra carrito)
+        {
+            _db.CarritoCompras.Add(carrito);
+            await _db.SaveChangesAsync();
+            return carrito;
+        }
+
+        public async Task EliminarItemAsync(int carritoId)
+        {
+            var item = await _db.CarritoCompras
+                .FirstOrDefaultAsync(c => c.CarritoId == carritoId);
+
+            if (item != null)
+            {
+                _db.CarritoCompras.Remove(item);
+                await _db.SaveChangesAsync();
+            }
         }
     }
 }

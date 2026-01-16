@@ -48,4 +48,16 @@ public class PagoRepositorio : Repositorio<Pago>, IPagoRepositorio
             .ThenInclude(p => p.TipoPago)
             .ToListAsync();
     }
+
+    public async Task<List<Pago>> ObtenerPagosPorUsuario(int usuarioId)
+    {
+        return await _db.Pagos
+            .AsNoTracking()
+            .Include(p => p.Orden)
+            .Include(p => p.MedioPago)
+                .ThenInclude(mp => mp.TipoPago)
+            .Where(p => p.Orden.UsuarioId == usuarioId)
+            .ToListAsync();
+    }
+
 }

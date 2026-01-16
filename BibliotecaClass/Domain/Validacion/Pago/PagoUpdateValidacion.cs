@@ -10,10 +10,5 @@ public class PagoUpdateValidacion : AbstractValidator<PagoUpdateDto>
         RuleFor(x => x.OrdenId)
            .GreaterThan(0).WithMessage("Debe seleccionar un orden válido.");
 
-        RuleFor(x => x.MedioPagoId)
-            .GreaterThan(0).WithMessage("Debe seleccionar un medio pago válido.");
-
-        RuleFor(x => x.CodigoOperacion)
-            .MaximumLength(100).WithMessage("El Codigo Operacion no puede tener más de 100 caracteres.");
     }
 }

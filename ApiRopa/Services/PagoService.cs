@@ -1,8 +1,11 @@
 ﻿using ApiRopa.Models;
 using ApiRopa.Models.Responses;
 using AutoMapper;
+using BiblotecaClass.Domain.Dto.Pago;
+using BiblotecaClass.Domain.Entities;
 using BiblotecaWeb;
 using BiblotecaWeb.Datos;
+using BiblotecaWeb.Domain.Dto.DetalleTarjeta;
 using BiblotecaWeb.Domain.Dto.Pago;
 using BiblotecaWeb.Domain.Entities;
 using BiblotecaWeb.Model;
@@ -151,31 +154,202 @@ public class PagoService : IPagoService
         }
     }
 
-
-    public async Task<ApiResponse<PagoDto>> CrearPagoAsync(PagoCreateDto createDto)
+    public async Task<ApiResponse<PagoDto>> CrearPagoAsync(PagoCreateDto dto, int usuarioId)
     {
+        using var transaction = await _context.Database.BeginTransactionAsync();
+
         try
         {
-            if (createDto == null)
-                return ResponseHelper.Fail<PagoDto>("Datos inválidos para crear Pago.", "Pago");
-
-            var validation = await _createValidator.ValidateAsync(createDto);
+            // 1️⃣ Validación base
+            var validation = await _createValidator.ValidateAsync(dto);
             if (!validation.IsValid)
                 return ResponseHelper.Fail<PagoDto>(validation.Errors);
 
-            var modelo = _mapper.Map<Pago>(createDto);
-            await _PagoRepo.Crear(modelo);
+            InfoTarjetas infoTarjeta = null;
 
-            var dto = _mapper.Map<PagoDto>(modelo);
-            _logger.LogInformation("✅ Pago '{Titulo}' creado correctamente.", dto.OrdenId);
-            return ResponseHelper.Success(dto, "Pago creado correctamente", HttpStatusCode.Created);
+            // ================================
+            // 2️⃣ MANEJO DE TARJETA
+            // ================================
+            if (dto.InfoTarjetaId.HasValue && dto.InfoTarjetaId > 0)
+            {
+                // Tarjeta guardada
+                infoTarjeta = await _context.InfomaTarjetas
+                    .Include(t => t.DetalleTarjeta)
+                    .FirstOrDefaultAsync(t =>
+                        t.InfoTarjetaId == dto.InfoTarjetaId &&
+                        t.UsuarioId == usuarioId &&
+                        t.Estado);
+
+                if (infoTarjeta == null)
+                    return ResponseHelper.Fail<PagoDto>("La tarjeta no existe o no pertenece al usuario.");
+            }
+            else if (dto.NuevaTarjeta != null)
+            {
+                // Tarjeta nueva
+                if (!dto.MedioPagoId.HasValue || dto.MedioPagoId <= 0)
+                    return ResponseHelper.Fail<PagoDto>("Debe especificar MedioPagoId al crear una nueva tarjeta.");
+
+                var tarjetaDuplicada = await _context.InfomaTarjetas
+                    .Include(t => t.DetalleTarjeta)
+                    .AnyAsync(t =>
+                        t.UsuarioId == usuarioId &&
+                        t.MedioPagoId == dto.MedioPagoId &&
+                        t.DetalleTarjeta.NumeroTarjeta == dto.NuevaTarjeta.NumeroTarjeta);
+
+                if (tarjetaDuplicada)
+                    return ResponseHelper.Fail<PagoDto>("Esta tarjeta ya está registrada.");
+
+                // Crear detalle tarjeta
+                var detalle = new DetalleTarjeta
+                {
+                    NumeroTarjeta = dto.NuevaTarjeta.NumeroTarjeta,
+                    FechaVencimiento = dto.NuevaTarjeta.FechaVencimiento,
+                    CVV = dto.NuevaTarjeta.CVV,
+                    Estado = true
+                };
+                _context.DetalleTarjetas.Add(detalle);
+                await _context.SaveChangesAsync();
+
+                // Crear info tarjeta
+                infoTarjeta = new InfoTarjetas
+                {
+                    UsuarioId = usuarioId,
+                    DetalleTarjetaId = detalle.DetalleTarjetaId,
+                    MedioPagoId = dto.MedioPagoId.Value,
+                    Estado = true
+                };
+                _context.InfomaTarjetas.Add(infoTarjeta);
+                await _context.SaveChangesAsync();
+            }
+            else
+            {
+                return ResponseHelper.Fail<PagoDto>("Debe seleccionar una tarjeta guardada o registrar una nueva.");
+            }
+
+            // ================================
+            // 3️⃣ CREAR PAGO
+            // ================================
+            var pago = new Pago
+            {
+                OrdenId = dto.OrdenId,
+                InfoTarjetaId = infoTarjeta.InfoTarjetaId,
+                MedioPagoId = infoTarjeta.MedioPagoId,
+                CodigoOperacion = dto.CodigoOperacion,
+                Estado = dto.Estado,
+                FechaRegistro = DateTime.Now
+            };
+            _context.Pagos.Add(pago);
+            await _context.SaveChangesAsync();
+
+            // ================================
+            // 4️⃣ CONFIRMAR COMPRA Y LIMPIAR CARRITOS ANTIGUOS
+            // ================================
+            var (exitoCompra, mensajeCompra) = await ConfirmarCompraAsync(dto.OrdenId, usuarioId);
+
+            if (!exitoCompra)
+            {
+                await transaction.RollbackAsync();
+                return ResponseHelper.Fail<PagoDto>($"Pago creado pero no se pudo confirmar la compra: {mensajeCompra}");
+            }
+
+            await transaction.CommitAsync();
+
+            var result = _mapper.Map<PagoDto>(pago);
+            return ResponseHelper.Success(result, "Pago registrado y stock descontado correctamente", HttpStatusCode.Created);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error al crear Pago.");
-            return ResponseHelper.FailException<PagoDto>(ex);
+            await transaction.RollbackAsync();
+            var errorReal = ex.InnerException?.Message ?? ex.Message;
+            return ResponseHelper.Fail<PagoDto>(errorReal);
         }
     }
+
+    public async Task<(bool Exito, string Mensaje)> ConfirmarCompraAsync(int ordenId, int usuarioId)
+    {
+        try
+        {
+            // 1️⃣ Traer la orden actual con carritos y productos
+            var orden = await _context.Ordenes
+                .Include(o => o.CarritoCompras)
+                    .ThenInclude(c => c.ProductoTalla)
+                .FirstOrDefaultAsync(o =>
+                    o.OrdenId == ordenId &&
+                    o.UsuarioId == usuarioId);
+
+            if (orden == null)
+                return (false, "La orden no existe o no pertenece al usuario.");
+
+            if (orden.CarritoCompras == null || !orden.CarritoCompras.Any())
+                return (false, "La orden no contiene productos.");
+
+            // 2️⃣ Liberar stock de otros carritos activos del mismo usuario (carritos fantasma)
+            var carritosActivosPrevios = await _context.CarritoCompras
+                .Include(c => c.ProductoTalla)
+                .Where(c => c.UsuarioId == usuarioId
+                            && c.Estado // activos
+                            && c.OrdenId != ordenId) // excluir la orden actual
+                .ToListAsync();
+
+            foreach (var carrito in carritosActivosPrevios)
+            {
+                if (carrito.ProductoTalla != null)
+                {
+                    carrito.ProductoTalla.StockReservado -= carrito.Cantidad;
+                    if (carrito.ProductoTalla.StockReservado < 0)
+                        carrito.ProductoTalla.StockReservado = 0;
+
+                    _context.ProductoTallas.Update(carrito.ProductoTalla);
+                }
+
+                carrito.Estado = false; // desactivar carrito fantasma
+                _context.CarritoCompras.Update(carrito);
+            }
+
+            // 3️⃣ Validar stock disponible para la orden actual
+            foreach (var carrito in orden.CarritoCompras)
+            {
+                var productoTalla = carrito.ProductoTalla;
+                if (productoTalla == null)
+                    return (false, $"Producto/Talla no encontrada. ProductoTallaId: {carrito.ProductoTallaId}");
+
+                int stockDisponible = productoTalla.Stock - productoTalla.StockReservado;
+                if (carrito.Cantidad > stockDisponible)
+                    return (false, $"Stock insuficiente para el producto {productoTalla.ProductoId}. Disponible: {stockDisponible}");
+            }
+
+            // 4️⃣ Descontar stock de la orden actual y liberar stock reservado
+            foreach (var carrito in orden.CarritoCompras)
+            {
+                var productoTalla = carrito.ProductoTalla;
+
+                productoTalla.Stock -= carrito.Cantidad;
+                productoTalla.StockReservado -= carrito.Cantidad;
+                if (productoTalla.StockReservado < 0) productoTalla.StockReservado = 0;
+                if (productoTalla.Stock <= 0)
+                {
+                    productoTalla.Stock = 0;
+                    productoTalla.Estado = false; // inactivar producto si se agota
+                }
+
+                carrito.Estado = false; // carrito comprado
+                _context.ProductoTallas.Update(productoTalla);
+                _context.CarritoCompras.Update(carrito);
+            }
+
+            // 5️⃣ Guardar todos los cambios en una sola operación
+            await _context.SaveChangesAsync();
+
+            return (true, "Compra confirmada, stock descontado y carritos previos liberados correctamente.");
+        }
+        catch (Exception ex)
+        {
+            var error = ex.InnerException?.Message ?? ex.Message;
+            return (false, $"Error al confirmar compra: {error}");
+        }
+    }
+
+
 
     public async Task<ApiResponse<object>> EliminarPagoAsync(int id)
     {
@@ -260,9 +434,31 @@ public class PagoService : IPagoService
         }
     }
 
+    public async Task<ApiResponse<List<PagoDto>>> ObtenerPagosPorUsuarioAsync(int usuarioId)
+    {
+        try
+        {
+            if (usuarioId <= 0)
+                return ResponseHelper.Fail<List<PagoDto>>("Usuario no válido.","UsuarioId",HttpStatusCode.BadRequest);
 
+            var pagos = await _PagoRepo.ObtenerPagosPorUsuario(usuarioId);
 
- 
+            if (pagos == null || !pagos.Any())
+                return ResponseHelper.Fail<List<PagoDto>>("No se encontraron pagos para el usuario.","Pagos",HttpStatusCode.NotFound);
+
+            var pagosDto = _mapper.Map<List<PagoDto>>(pagos);
+
+            _logger.LogInformation("✅ Se obtuvieron {Count} pagos para el Usuario ID {UsuarioId}.", pagosDto.Count, usuarioId);
+
+            return ResponseHelper.Success<List<PagoDto>>(pagosDto,"Pagos del usuario obtenidos correctamente.",HttpStatusCode.OK);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,"❌ Error al obtener pagos del Usuario ID {UsuarioId}.",usuarioId);
+
+            return ResponseHelper.FailException<List<PagoDto>>(ex);
+        }
+    }
 
 }
 

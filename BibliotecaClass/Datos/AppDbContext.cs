@@ -1,7 +1,7 @@
-﻿using BiblotecaWeb;
+﻿using BiblotecaClass.Domain.Entities;
+using BiblotecaWeb;
 using BiblotecaWeb.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -47,6 +47,7 @@ namespace BiblotecaWeb.Datos
         public DbSet<Historia> Historias { get; set; }
         public DbSet<MedioPago> MedioPagos { get; set; }
         public DbSet<Moneda> Monedas { get; set; }
+        public DbSet<InfoTarjetas> InfomaTarjetas { get; set; }
         public DbSet<Noticia> Noticias { get; set; }
         public DbSet<Orden> Ordenes { get; set; }
         public DbSet<OrdenCupon> OrdenCupones { get; set; }
@@ -93,6 +94,7 @@ namespace BiblotecaWeb.Datos
             modelBuilder.Entity<Pago>().ToTable("Pago");
             modelBuilder.Entity<Permiso>().ToTable("Permiso");
             modelBuilder.Entity<PermRol>().ToTable("PermRol");
+            modelBuilder.Entity<InfoTarjetas>().ToTable("InfoTarjetas");
             modelBuilder.Entity<Pregunta>().ToTable("Pregunta");
             modelBuilder.Entity<Producto>().ToTable("Producto");
             modelBuilder.Entity<ProductoCategoria>().ToTable("ProductoCategoria");
@@ -121,16 +123,25 @@ namespace BiblotecaWeb.Datos
                 .HasForeignKey(ur => ur.RolId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            // InfoTarjeta - DetalleTarjeta- MedioPago
+            modelBuilder.Entity<InfoTarjetas>()
+                 .HasKey(ur => ur.InfoTarjetaId);
 
-            // Pago - DetalleTarjeta (1:N)
-            modelBuilder.Entity<DetalleTarjeta>()
-                .HasKey(ur => ur.DetalleTarjetaId);
+            modelBuilder.Entity<InfoTarjetas>()
+                .HasOne(ur => ur.DetalleTarjeta)
+                .WithMany(u => u.InfomaTarjetas)
+                .HasForeignKey(ur => ur.DetalleTarjetaId);
 
-            modelBuilder.Entity<DetalleTarjeta>()
-                .HasOne(ur => ur.Pago)
-                .WithMany(u => u.DetalleTarjetas)
-                .HasForeignKey(ur => ur.PagoId)
-                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<InfoTarjetas>()
+                .HasOne(ur => ur.MedioPago)
+                .WithMany(r => r.InfomaTarjetas)
+                .HasForeignKey(ur => ur.MedioPagoId);
+
+            modelBuilder.Entity<InfoTarjetas>()
+                .HasOne(ur => ur.Usuario)
+                .WithMany(r => r.InfomaTarjetas)
+                .HasForeignKey(ur => ur.UsuarioId);
 
             // Usuario - Dirección (1:N)
             modelBuilder.Entity<Direccion>()
@@ -209,6 +220,17 @@ namespace BiblotecaWeb.Datos
                 .WithMany(u => u.Pagos)
                 .HasForeignKey(ur => ur.MedioPagoId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<Pago>()
+     .HasOne(p => p.InfomaTarjetas)
+     .WithMany(i => i.Pagos)
+     .HasForeignKey(p => p.InfoTarjetaId)
+     .IsRequired(false) // 👈 clave
+     .OnDelete(DeleteBehavior.Restrict);
+
+
+
+
 
             // Rol - Permiso(N: M)
             modelBuilder.Entity<PermRol>()

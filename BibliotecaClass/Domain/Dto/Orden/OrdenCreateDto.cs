@@ -9,7 +9,7 @@ public class OrdenCreateDto
     public int? SucursalId { get; set; }
     public string MetodoEntrega { get; set; }
     public int? DireccionId { get; set; }
-    public bool Estado { get; set; }
+    public bool? Estado { get; set; }
     public decimal? Total { get; set; }
 
 

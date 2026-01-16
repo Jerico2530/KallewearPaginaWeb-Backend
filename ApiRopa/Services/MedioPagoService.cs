@@ -74,7 +74,7 @@ public class MedioPagoService : IMedioPagoService
         {
             _logger.LogInformation("🔍 Obteniendo todos los MedioPagos activos...");
             // Obtener todos los medios de pago de la base de datos
-            var MedioPagos = await _MedioPagoRepo.ObtenerTodo();
+            var MedioPagos = await _MedioPagoRepo.ObtenerMedioPagosConDetalles();
 
             if (MedioPagos == null || !MedioPagos.Any())
             {

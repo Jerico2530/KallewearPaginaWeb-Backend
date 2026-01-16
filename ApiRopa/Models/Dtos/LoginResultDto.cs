@@ -20,6 +20,7 @@
         public string ApellidoCompleto { get; set; }
         public string DNI { get; set; }
         public string CorreoElectronico { get; set; }
+        public string Imagen { get; set; }
         public List<string> Roles { get; set; }
         public List<string> Permisos { get; set; }
     }

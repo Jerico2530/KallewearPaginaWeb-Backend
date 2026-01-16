@@ -23,4 +23,6 @@ public interface IPagoRepositorio : IRepositorio<Pago>
     Task<Pago> ActualizarPago(Pago entidad);
     /// Obtiene la lista de pagos incluyendo los detalles asociados.
     Task<List<Pago>> ObtenerPagosConDetalles();
+    /// Obtiene la lista de pagos incluyendo los detalles asociados por usuarios.
+    Task<List<Pago>> ObtenerPagosPorUsuario(int usuarioId);
 }

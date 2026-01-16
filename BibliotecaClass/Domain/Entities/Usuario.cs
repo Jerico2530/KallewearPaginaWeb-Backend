@@ -1,4 +1,5 @@
-﻿using System;
+﻿using BiblotecaClass.Domain.Entities;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
@@ -28,5 +29,7 @@ namespace BiblotecaWeb.Domain.Entities
         public ICollection<CarritoCompra> CarritoCompras { get; set; } = new List<CarritoCompra>();
         public ICollection<Orden> Ordenes { get; set; } = new List<Orden>();
         public ICollection<Direccion> Direcciones { get; set; } = new List<Direccion>();
+        public ICollection<InfoTarjetas> InfomaTarjetas { get; set; } = new List<InfoTarjetas>();
+
     }
 }

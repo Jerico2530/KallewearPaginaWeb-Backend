@@ -27,15 +27,18 @@
  * - Las operaciones retornan códigos HTTP según el resultado obtenido.
  */
 
+using ApiRopa.Models;
 using ApiRopa.Models.Responses;
 using ApiRopa.Security;
 using ApiRopa.Security.Attributes;
 using BiblotecaWeb;
+using BiblotecaWeb.Domain.Dto.DetalleTarjeta;
 using BiblotecaWeb.Domain.Dto.Pago;
 using BiblotecaWeb.Model;
 using Microsoft.AspNetCore.JsonPatch;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
+using System.Security.Claims;
 
 namespace ApiRopa.Controllers
 {
@@ -100,6 +103,7 @@ namespace ApiRopa.Controllers
             );
         }
 
+
         [HttpPost]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -108,20 +112,43 @@ namespace ApiRopa.Controllers
         public async Task<ActionResult<ApiResponse<PagoDto>>> CrearPago([FromBody] PagoCreateDto createDto)
         {
             _logger.LogInformation("📝 Creando nuevo Pago.");
-            // Solicita la creación de la pago en la capa de servicios.
-            var response = await _PagoService.CrearPagoAsync(createDto);
-            // Si ocurre un error en la creación, retorna el código correspondiente.
-            if (!response.IsExitoso)
+
+            try
             {
-                _logger.LogWarning("Error al crear Pago: {@Response}", response);
-                // Retorna la respuesta con el código HTTP y el contenido generado por el servicio.
-                return StatusCode((int)response.StatusCode, response);
+                // 1️⃣ Obtener usuarioId desde el token correctamente
+                var usuarioIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
+                if (usuarioIdClaim == null)
+                {
+                    _logger.LogWarning("❌ Token inválido o expirado.");
+                    return Unauthorized(ResponseHelper.Fail<PagoDto>("Token inválido o expirado."));
+                }
+
+                int usuarioId = int.Parse(usuarioIdClaim.Value);
+
+                // 2️⃣ Llamar al servicio de pagos
+                var response = await _PagoService.CrearPagoAsync(createDto, usuarioId);
+
+                // 3️⃣ Manejo de errores
+                if (!response.IsExitoso)
+                {
+                    _logger.LogWarning("❌ Error al crear Pago: {@Response}", response);
+                    return StatusCode((int)response.StatusCode, response);
+                }
+
+                // 4️⃣ Pago creado correctamente
+                var pago = response.Resultado;
+                return CreatedAtRoute("GetPago", new { id = pago?.PagoId }, response);
             }
-            // Extrae el resultado generado para construir la ruta de retorno.
-            var carrito = response.Resultado ;
-            // Retorna el recurso creado incluyendo su endpoint de consulta.
-            return CreatedAtRoute("GetPago", new { id = carrito?.PagoId }, response);
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "💥 Error inesperado al crear Pago");
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    ResponseHelper.FailException<PagoDto>(ex));
+            }
         }
+
+
+
 
         [HttpDelete("{id:int}")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -164,5 +191,20 @@ namespace ApiRopa.Controllers
             // Retorna la respuesta con el código HTTP y el contenido generado por el servicio.
             return StatusCode((int)response.StatusCode, response);
         }
+
+        [HttpGet("usuario/{usuarioId:int}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [AutorizacionPermiso("Pago.Ver")]
+        public async Task<ActionResult<ApiResponse<List<PagoDto>>>> GetPagosPorUsuario(int usuarioId)
+        {
+            _logger.LogInformation("🔍 Solicitud para obtener pagos del Usuario ID {UsuarioId}",usuarioId);
+            // 🔹 Llamada al service (lógica de negocio centralizada)
+            var response = await _PagoService.ObtenerPagosPorUsuarioAsync(usuarioId);
+            // 🔹 Retorna exactamente el contrato del service
+            return StatusCode((int)response.StatusCode, response);
+        }
+
     }
 }

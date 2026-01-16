@@ -28,7 +28,7 @@ public class OrdenDto
     public string Distrito { get; set; }
     public string Via { get; set; }
     public string Numero { get; set; }
-    public bool Estado { get; set; }
+    public bool? Estado { get; set; }
     public decimal? Total { get; set; }
     [Display(Name = "Fecha de Registro")]
     public DateTime FechaRegistro { get; set; } = DateTime.Now;

@@ -3,15 +3,18 @@ using ApiRopa.Models.Responses;
 using ApiRopa.Repositorio.IRepositorio;
 using ApiRopa.Services;
 using ApiRopa.Services.Dominio;
+using ApiRopa.Services.Help;
 using ApiRopa.Services.IServices;
 using AutoMapper;
 using Azure;
+using BiblotecaWeb.Datos;
 using BiblotecaWeb.Domain.Entities;
 using BiblotecaWeb.Domain.Validacion.CarritoCompra;
 using BiblotecaWeb.Model;
 using BiblotecaWeb.Model.Dto;
 using FluentValidation;
 using Microsoft.AspNetCore.JsonPatch;
+using Microsoft.EntityFrameworkCore;
 using System.Net;
 /*
  * CarritoCompraService
@@ -42,6 +45,7 @@ public class CarritoCompraService : ICarritoCompraService
 {
     private readonly ICarritoCompraRepositorio _CarritoCompraRepo;
     private readonly IMapper _mapper;
+
     private readonly ILogger<CarritoCompraService> _logger;
     private readonly IProductoTallaRepositorio _productoTallaRepo;
     private readonly CarritoServicioDominio _carritoServicioDominio;
@@ -50,7 +54,7 @@ public class CarritoCompraService : ICarritoCompraService
     private readonly IValidator<int> _getValidator;
     private readonly IValidator<int> _deleteValidator; 
 
-    public CarritoCompraService(ICarritoCompraRepositorio CarritoCompraRepo, IMapper mapper, ILogger<CarritoCompraService> logger , CarritoServicioDominio carritoServicioDominio, IProductoTallaRepositorio productoTallaRepo , IValidator<CarritoCompraCreateDto> createValidator, IValidator<CarritoCompraUpdateDto> updateValidator, IValidator<int> getValidator, IValidator<int> deleteValidator)
+    public CarritoCompraService(ICarritoCompraRepositorio CarritoCompraRepo, IMapper mapper, ILogger<CarritoCompraService> logger , CarritoServicioDominio carritoServicioDominio, IProductoTallaRepositorio productoTallaRepo , IValidator<CarritoCompraCreateDto> createValidator, IValidator<CarritoCompraUpdateDto> updateValidator, IValidator<int> getValidator, IValidator<int> deleteValidator )
     {
         _CarritoCompraRepo = CarritoCompraRepo;
         _mapper = mapper;
@@ -61,6 +65,7 @@ public class CarritoCompraService : ICarritoCompraService
         _getValidator = getValidator;
         _deleteValidator = deleteValidator;
         _productoTallaRepo = productoTallaRepo;
+
     }
 
 
@@ -188,91 +193,58 @@ public class CarritoCompraService : ICarritoCompraService
     {
         try
         {
-            _logger.LogInformation("🛍️ Creando nuevo CarritoCompra para el usuario {UsuarioId}...", createDto.UsuarioId);
+            _logger.LogInformation("🛍️ Creando carrito para UsuarioId: {UsuarioId}", createDto.UsuarioId);
 
-            // Validar DTO
+            // Validación del DTO
             var validation = await _createValidator.ValidateAsync(createDto);
             if (!validation.IsValid)
-            {
-                _logger.LogWarning("❌ Validación fallida al crear CarritoCompra: {Errores}", string.Join(", ", validation.Errors.Select(e => e.ErrorMessage)));
                 return ResponseHelper.Fail<CarritoCompraDto>(validation.Errors);
-            }
 
-            // 2 Validar existencia de ProductoTalla
+            // Validar existencia de producto
             var productoTalla = await _productoTallaRepo.ObtenerProductoTallaConDetallesPorId(createDto.ProductoTallaId);
             if (productoTalla == null)
-            {
-                return ResponseHelper.Fail<CarritoCompraDto>(
-                    new List<ErrorDetail>
-                    {
-                    new() { Campo = "ProductoTallaId", Mensaje = "El Producto Talla especificado no existe." }
-                    },
-                    HttpStatusCode.BadRequest
-                );
-            }
+                return ResponseHelper.Fail<CarritoCompraDto>("Producto Talla no existe.", "ProductoTallaId");
 
-            // Validación de stock disponible antes de reservarlo.
+            // Validar stock
             int stockDisponible = productoTalla.Stock - productoTalla.StockReservado;
             if (createDto.Cantidad > stockDisponible)
-            {
-                return ResponseHelper.Fail<CarritoCompraDto>("No existe stock suficiente para este producto.", "Cantidad");
-            }
+                return ResponseHelper.Fail<CarritoCompraDto>("No hay stock suficiente.", "Cantidad");
 
-            // Reservar el stock antes de crear el carrito
-            bool stockReservado = await _productoTallaRepo.ReservarStockAsync(createDto.ProductoTallaId, createDto.Cantidad);
+            // Reservar stock (solo si NO es invitado)
+            bool stockReservado = await CarritoHelper.ReservarStockSiNoEsInvitadoAsync(_productoTallaRepo, createDto.ProductoTallaId, createDto.Cantidad, createDto.UsuarioId, _logger);
             if (!stockReservado)
+                return ResponseHelper.Fail<CarritoCompraDto>("No se pudo reservar stock.", "Cantidad");
+
+            // Verificar si ya existe el ítem en el carrito
+            var existente = await _CarritoCompraRepo.Obtener(x => x.UsuarioId == createDto.UsuarioId && x.ProductoTallaId == createDto.ProductoTallaId);
+            if (existente != null)
             {
-                return ResponseHelper.Fail<CarritoCompraDto>("No se pudo reservar el stock disponible para este producto.", "Cantidad");
+                existente.Cantidad += createDto.Cantidad;
+                existente.SubTotal = existente.Cantidad * existente.PrecioUnitario;
+                await _CarritoCompraRepo.ActualizarCarritoCompra(existente);
+                return ResponseHelper.Success(_mapper.Map<CarritoCompraDto>(existente), "Carrito actualizado correctamente.");
             }
 
-            try
+            // Crear nuevo item
+            var nuevoCarrito = new CarritoCompra
             {
-                // Reutilización de ítem si ya existe en el carrito.
-                var existente = await _CarritoCompraRepo.Obtener(x => x.UsuarioId == createDto.UsuarioId && x.ProductoTallaId == createDto.ProductoTallaId);
-                if (existente != null)
-                {
-                    existente.Cantidad += createDto.Cantidad;
-                    existente.SubTotal = existente.Cantidad * existente.PrecioUnitario;
+                UsuarioId = createDto.UsuarioId,
+                ProductoTallaId = createDto.ProductoTallaId,
+                Cantidad = createDto.Cantidad,
+                PrecioUnitario = createDto.PrecioUnitario,
+                SubTotal = createDto.Cantidad * createDto.PrecioUnitario,
+                Estado = createDto.Estado
+            };
 
-                    await _CarritoCompraRepo.ActualizarCarritoCompra(existente);
-
-                    var dtoActualizado = _mapper.Map<CarritoCompraDto>(existente);
-                    _logger.LogInformation("🌀 Carrito actualizado (sumando cantidad) para usuario {UsuarioId}", createDto.UsuarioId);
-                    return ResponseHelper.Success(dtoActualizado, "CarritoCompra actualizado correctamente", HttpStatusCode.OK);
-                }
-
-                // Crear nuevo item
-                var nuevoCarrito = new CarritoCompra
-                {
-                    UsuarioId = createDto.UsuarioId,
-                    ProductoTallaId = createDto.ProductoTallaId,
-                    Cantidad = createDto.Cantidad,
-                    PrecioUnitario = createDto.PrecioUnitario,
-                    SubTotal = createDto.Cantidad * createDto.PrecioUnitario,
-                    Estado = createDto.Estado
-                };
-
-                await _CarritoCompraRepo.Crear(nuevoCarrito);
-
-                var dtoNuevo = _mapper.Map<CarritoCompraDto>(nuevoCarrito);
-                _logger.LogInformation("✅ CarritoCompra creado correctamente para usuario {UsuarioId}", createDto.UsuarioId);
-                return ResponseHelper.Success(dtoNuevo, "CarritoCompra creado correctamente", HttpStatusCode.Created);
-            }
-            catch (Exception innerEx)
-            {
-                // Si la operación falla, se libera el stock previamente reservado.
-                await _productoTallaRepo.LiberarStockAsync(createDto.ProductoTallaId, createDto.Cantidad);
-                _logger.LogError(innerEx, "❌ Error al crear CarritoCompra después de reservar stock para usuario {UsuarioId}", createDto.UsuarioId);
-                return ResponseHelper.FailException<CarritoCompraDto>(innerEx);
-            }
+            await _CarritoCompraRepo.Crear(nuevoCarrito);
+            return ResponseHelper.Success(_mapper.Map<CarritoCompraDto>(nuevoCarrito), "Carrito creado correctamente.", HttpStatusCode.Created);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error al crear CarritoCompra para usuario {UsuarioId}", createDto?.UsuarioId);
+            _logger.LogError(ex, "❌ Error creando carrito para UsuarioId: {UsuarioId}", createDto?.UsuarioId);
             return ResponseHelper.FailException<CarritoCompraDto>(ex);
         }
     }
-
 
 
     public async Task<ApiResponse<object>> EliminarCarritoCompraAsync(int id)
@@ -319,6 +291,7 @@ public class CarritoCompraService : ICarritoCompraService
         }
     }
 
+
     public async Task<ApiResponse<object>> ActualizarCarritoCompraAsync(int id, CarritoCompraUpdateDto updateDto)
     {
         try
@@ -332,20 +305,22 @@ public class CarritoCompraService : ICarritoCompraService
 
             var carritoExistente = await _CarritoCompraRepo.Obtener(c => c.CarritoId == id, tracked: true);
             if (carritoExistente == null)
-                return ResponseHelper.Fail<object>("El carrito no existe.", "CarritoId", HttpStatusCode.NotFound);
+                return ResponseHelper.Fail<object>("Carrito no encontrado.", "CarritoId", HttpStatusCode.NotFound);
 
-            //  Calcular diferencia antes de actualizar cantidad
             int diferencia = updateDto.Cantidad - carritoExistente.Cantidad;
 
             if (diferencia > 0)
             {
-                bool stockDisponible = await _productoTallaRepo.ReservarStockAsync(carritoExistente.ProductoTallaId, diferencia);
+                bool stockDisponible = await CarritoHelper.ReservarStockSiNoEsInvitadoAsync(
+                    _productoTallaRepo, carritoExistente.ProductoTallaId, diferencia, carritoExistente.UsuarioId, _logger);
+
                 if (!stockDisponible)
-                    return ResponseHelper.Fail<object>("No hay suficiente stock para aumentar la cantidad", "Stock", HttpStatusCode.BadRequest);
+                    return ResponseHelper.Fail<object>("No hay suficiente stock para aumentar la cantidad.", "Stock");
             }
             else if (diferencia < 0)
             {
-                await _productoTallaRepo.LiberarStockAsync(carritoExistente.ProductoTallaId, -diferencia);
+                await CarritoHelper.LiberarStockSiNoEsInvitadoAsync(
+                    _productoTallaRepo, carritoExistente.ProductoTallaId, -diferencia, carritoExistente.UsuarioId, _logger);
             }
 
             carritoExistente.Cantidad = updateDto.Cantidad > 0 ? updateDto.Cantidad : carritoExistente.Cantidad;
@@ -354,30 +329,33 @@ public class CarritoCompraService : ICarritoCompraService
             carritoExistente.Estado = updateDto.Estado ?? carritoExistente.Estado;
 
             await _CarritoCompraRepo.ActualizarCarritoCompra(carritoExistente);
-
             decimal totalCarrito = await _CarritoCompraRepo.CalcularTotalAsync(carritoExistente.UsuarioId);
-            var resultado = new { Item = carritoExistente, TotalCarrito = totalCarrito };
 
-            _logger.LogInformation("✅ CarritoCompra actualizado correctamente con ID {Id}", id);
-            return ResponseHelper.Success<object>(resultado, "CarritoCompra actualizado correctamente.", HttpStatusCode.OK);
+            // 🔑 Aquí convertimos explícitamente a object
+            object resultado = new { Item = carritoExistente, TotalCarrito = totalCarrito };
+
+            return ResponseHelper.Success(resultado, "Carrito actualizado correctamente.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error al actualizar CarritoCompra ID {Id}", id);
+            _logger.LogError(ex, "❌ Error actualizando carrito ID: {Id}", id);
             return ResponseHelper.FailException<object>(ex);
         }
     }
+
+
+
 
     public async Task<ApiResponse<CarritoCompraDto>> ActualizarParcialCarritoCompraAsync(int id, JsonPatchDocument<CarritoCompraUpdateDto> patchDto)
     {
         try
         {
             if (patchDto == null || id <= 0)
-                return ResponseHelper.Fail<CarritoCompraDto>("Datos inválidos para la actualización parcial.", "Patch");
+                return ResponseHelper.Fail<CarritoCompraDto>("Datos inválidos para actualización parcial.", "Patch");
 
             var carritoExistente = await _CarritoCompraRepo.Obtener(c => c.CarritoId == id, tracked: true);
             if (carritoExistente == null)
-                return ResponseHelper.Fail<CarritoCompraDto>("CarritoCompra no encontrado.", "Id", HttpStatusCode.NotFound);
+                return ResponseHelper.Fail<CarritoCompraDto>("Carrito no encontrado.", "Id", HttpStatusCode.NotFound);
 
             var carritoDto = _mapper.Map<CarritoCompraUpdateDto>(carritoExistente);
             patchDto.ApplyTo(carritoDto);
@@ -386,17 +364,17 @@ public class CarritoCompraService : ICarritoCompraService
             if (!validation.IsValid)
                 return ResponseHelper.Fail<CarritoCompraDto>(validation.Errors);
 
-            // Validación de stock según el new patch result.
             int diferencia = carritoDto.Cantidad - carritoExistente.Cantidad;
+
             if (diferencia > 0)
             {
-                bool stockDisponible = await _productoTallaRepo.ReservarStockAsync(carritoExistente.ProductoTallaId, diferencia);
+                bool stockDisponible = await CarritoHelper.ReservarStockSiNoEsInvitadoAsync(_productoTallaRepo, carritoExistente.ProductoTallaId, diferencia, carritoExistente.UsuarioId, _logger);
                 if (!stockDisponible)
-                    return ResponseHelper.Fail<CarritoCompraDto>("No hay suficiente stock para aumentar la cantidad", "Stock", HttpStatusCode.BadRequest);
+                    return ResponseHelper.Fail<CarritoCompraDto>("No hay suficiente stock para aumentar la cantidad.", "Stock");
             }
             else if (diferencia < 0)
             {
-                await _productoTallaRepo.LiberarStockAsync(carritoExistente.ProductoTallaId, -diferencia);
+                await CarritoHelper.LiberarStockSiNoEsInvitadoAsync(_productoTallaRepo, carritoExistente.ProductoTallaId, -diferencia, carritoExistente.UsuarioId, _logger);
             }
 
             carritoExistente.Cantidad = carritoDto.Cantidad;
@@ -406,17 +384,15 @@ public class CarritoCompraService : ICarritoCompraService
 
             await _CarritoCompraRepo.ActualizarCarritoCompra(carritoExistente);
 
-            decimal totalCarrito = await _CarritoCompraRepo.CalcularTotalAsync(carritoExistente.UsuarioId);
-
-            _logger.LogInformation("✅ Actualización parcial aplicada exitosamente al CarritoCompra con ID {Id}.", id);
-            return ResponseHelper.Success(_mapper.Map<CarritoCompraDto>(carritoExistente), "CarritoCompra actualizado parcialmente.", HttpStatusCode.OK);
+            return ResponseHelper.Success(_mapper.Map<CarritoCompraDto>(carritoExistente), "Carrito actualizado parcialmente.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error al aplicar PATCH al CarritoCompra con ID {Id}", id);
+            _logger.LogError(ex, "❌ Error aplicando PATCH carrito ID: {Id}", id);
             return ResponseHelper.FailException<CarritoCompraDto>(ex);
         }
     }
+
 
     public async Task<ApiResponse<CarritoCompraDto>> ObtenerSubtotalAsync(int usuarioId)
     {
@@ -539,64 +515,108 @@ public class CarritoCompraService : ICarritoCompraService
             _logger.LogInformation("💳 Confirmando compra para el usuario {UsuarioId}", usuarioId);
 
             if (usuarioId <= 0)
-                return ResponseHelper.Fail<object>(
-                    new List<ErrorDetail> { new() { Campo = "UsuarioId", Mensaje = "El identificador del usuario no es válido." } },
-                    HttpStatusCode.BadRequest
-                );
-
-            var carrito = await _CarritoCompraRepo.ObtenerCarritoPorUsuarioConDetalles(usuarioId);
-            if (carrito == null || !carrito.Any())
-                return ResponseHelper.Fail<object>(
-                    new List<ErrorDetail> { new() { Campo = "Carrito", Mensaje = "No hay items en el carrito para procesar la compra." } },
-                    HttpStatusCode.BadRequest
-                );
-
-            decimal totalCompra = 0m;
-            var itemsFallidos = new List<CarritoCompra>();
-
-            // Reservar confirmación con manejo de fallo
-            foreach (var item in carrito)
             {
-                bool confirmado = await _productoTallaRepo.ConfirmarCompraAsync(item.ProductoTallaId, item.Cantidad);
-                if (!confirmado)
-                    itemsFallidos.Add(item);
-                else
-                    totalCompra += item.SubTotal;
+                return ResponseHelper.Fail<object>(
+                    new List<ErrorDetail>
+                    {
+                    new() { Campo = "UsuarioId", Mensaje = "El identificador del usuario no es válido." }
+                    },
+                    HttpStatusCode.BadRequest
+                );
             }
 
-            if (itemsFallidos.Any())
+            // 1️⃣ Obtener carrito
+            var carrito = await _CarritoCompraRepo.ObtenerCarritoPorUsuarioConDetalles(usuarioId);
+
+            if (carrito == null || !carrito.Any())
             {
-                // Liberar stock de items ya confirmados si algún item falló
-                foreach (var item in carrito.Except(itemsFallidos))
+                return ResponseHelper.Fail<object>(
+                    new List<ErrorDetail>
+                    {
+                    new() { Campo = "Carrito", Mensaje = "No hay items en el carrito para procesar la compra." }
+                    },
+                    HttpStatusCode.BadRequest
+                );
+            }
+
+            // 2️⃣ LIMPIAR PRODUCTOS FANTASMA / SIN STOCK
+            foreach (var item in carrito.ToList()) // 🔥 ToList para evitar errores
+            {
+                if (item.ProductoTalla == null)
                 {
-                    await _productoTallaRepo.LiberarStockAsync(item.ProductoTallaId, item.Cantidad);
+                    _logger.LogWarning(
+                        "⚠️ Producto inválido eliminado del carrito. ProductoTallaId: {Id}",
+                        item.ProductoTallaId
+                    );
+
+                    await _CarritoCompraRepo.EliminarItemAsync(item.CarritoId);
+                    carrito.Remove(item);
+                    continue;
                 }
 
-                _logger.LogWarning("❌ Algunos items no pudieron confirmarse para el usuario {UsuarioId}: {Items}", usuarioId, string.Join(", ", itemsFallidos.Select(x => $"ProductoTallaId:{x.ProductoTallaId}")));
+                if (item.ProductoTalla.Stock <= 0)
+                {
+                    _logger.LogWarning(
+                        "⚠️ Producto sin stock eliminado del carrito. ProductoTallaId: {Id}",
+                        item.ProductoTallaId
+                    );
 
+                    await _CarritoCompraRepo.EliminarItemAsync(item.CarritoId);
+                    carrito.Remove(item);
+                }
+            }
+
+            // 3️⃣ Revalidar carrito después de limpieza
+            if (!carrito.Any())
+            {
                 return ResponseHelper.Fail<object>(
-                    new List<ErrorDetail> { new() { Campo = "Items", Mensaje = $"No se pudo confirmar la compra de los siguientes items: {string.Join(", ", itemsFallidos.Select(i => i.ProductoTallaId))}" } },
+                    new List<ErrorDetail>
+                    {
+                    new()
+                    {
+                        Campo = "Carrito",
+                        Mensaje = "El carrito quedó vacío porque los productos no eran válidos."
+                    }
+                    },
                     HttpStatusCode.BadRequest
                 );
             }
 
-            // Vaciar carrito solo si todos los items se confirmaron
+            // 4️⃣ Calcular totales (NO SE TOCA TU LÓGICA)
+            _carritoServicioDominio.CalcularSubtotales(carrito);
+            decimal totalCompra = _carritoServicioDominio.CalcularTotal(carrito);
+
+            // 5️⃣ Vaciar carrito (flujo correcto)
             await _CarritoCompraRepo.VaciarCarritoPorUsuarioAsync(usuarioId);
 
-            _logger.LogInformation("✅ Compra confirmada exitosamente para el usuario {UsuarioId}. Total: {Total}", usuarioId, totalCompra);
+            _logger.LogInformation(
+                "🧹 Carrito limpiado correctamente para el usuario {UsuarioId}",
+                usuarioId
+            );
 
+            // 6️⃣ Respuesta final
             return ResponseHelper.Success<object>(
-                new { UsuarioId = usuarioId, TotalCompra = totalCompra, ItemsComprados = carrito.Count },
-                "Compra confirmada correctamente.",
+                new
+                {
+                    UsuarioId = usuarioId,
+                    TotalCompra = totalCompra
+                },
+                "Compra confirmada y carrito limpiado correctamente.",
                 HttpStatusCode.OK
             );
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "❌ Error al confirmar la compra para el usuario {UsuarioId}", usuarioId);
+            _logger.LogError(ex, "❌ Error al confirmar compra para el usuario {UsuarioId}", usuarioId);
             return ResponseHelper.FailException<object>(ex);
         }
     }
+
+
+   
+
+
+
 
 }
 

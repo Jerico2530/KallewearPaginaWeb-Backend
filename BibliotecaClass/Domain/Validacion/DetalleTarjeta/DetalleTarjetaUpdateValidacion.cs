@@ -8,8 +8,6 @@ public class DetalleTarjetaUpdateValidacion : AbstractValidator<DetalleTarjetaUp
 {
     public DetalleTarjetaUpdateValidacion()
     {
-        RuleFor(x => x.PagoId)
-            .GreaterThan(0).WithMessage("Debe seleccionar un producto válido.");
 
         RuleFor(x => x.NumeroTarjeta)
             .NotEmpty().WithMessage("El Numero Tarjeta  es obligatorio.")
