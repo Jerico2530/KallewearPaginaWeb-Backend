@@ -165,60 +165,82 @@ public class UsuarioService : IUsuarioService
     {
         try
         {
+            // 🔹 Validación inicial del DTO
             if (createDto == null)
                 return ResponseHelper.Fail<UsuarioDto>("Datos inválidos para crear usuario.", "Usuario");
 
+            // 🔹 Validación con FluentValidation
             var validation = await _createValidator.ValidateAsync(createDto);
             if (!validation.IsValid)
                 return ResponseHelper.Fail<UsuarioDto>(validation.Errors);
 
+            // 🔹 Validación defensiva
+            if (string.IsNullOrWhiteSpace(createDto.DNI))
+                return ResponseHelper.Fail<UsuarioDto>("El DNI es obligatorio.", "DNI");
+            if (string.IsNullOrWhiteSpace(createDto.Contraseña))
+                return ResponseHelper.Fail<UsuarioDto>("La contraseña es obligatoria.", "Contraseña");
             if (createDto.Contraseña != createDto.ContraseñaVisible)
                 return ResponseHelper.Fail<UsuarioDto>("Las contraseñas no coinciden.", "Contraseña");
 
-            var existe = await _UsuarioRepo.Obtener(u => u.DNI.ToLower() == createDto.DNI.ToLower());
+            // 🔹 Verificar existencia del usuario
+            var existe = await _UsuarioRepo.Obtener(u =>
+                u.DNI != null && u.DNI.ToLower() == createDto.DNI.ToLower()
+            );
             if (existe != null)
                 return ResponseHelper.Fail<UsuarioDto>("Ya existe un usuario con ese DNI.", "DNI", HttpStatusCode.Conflict);
 
-            createDto.Contraseña = BCrypt.Net.BCrypt.HashPassword(createDto.Contraseña, workFactor: 8);
+            // 🔹 Hashear contraseña
+            createDto.Contraseña = BCrypt.Net.BCrypt.HashPassword(createDto.Contraseña, workFactor: 6);
 
+            // 🔹 Mapear DTO a entidad
             var usuario = _mapper.Map<Usuario>(createDto);
 
+            // 🔹 Preparar rol "Usuario" y relación UserRol en una sola transacción
+            // Usamos Transacción para optimizar SaveChanges
+            using var transaction = await _context.Database.BeginTransactionAsync();
+
+            // Crear usuario
             await _UsuarioRepo.Crear(usuario);
 
-            var rolUsuario = await _context.Roles.FirstOrDefaultAsync(r => r.NombreRol == "Usuario");
+            // Obtener rol o crear solo si no existe
+            var rolUsuario = await _context.Roles
+                .FirstOrDefaultAsync(r => r.NombreRol == "Usuario");
 
             if (rolUsuario == null)
             {
-                // Si no existe, lo creamos automáticamente
-                rolUsuario = new Rol
-                {
-                    NombreRol = "Usuario",
-                    Estado = true
-                };
+                rolUsuario = new Rol { NombreRol = "Usuario", Estado = true };
                 _context.Roles.Add(rolUsuario);
-                await _context.SaveChangesAsync();
             }
 
-            // 🔗 Crear relación UserRol
+            // Crear relación UserRol
             var userRol = new UserRol
             {
                 UsuarioId = usuario.UsuarioId,
                 RolId = rolUsuario.RolId,
                 Estado = true
             };
-
             _context.UserRoles.Add(userRol);
-            await _context.SaveChangesAsync();
 
-            var dto = _mapper.Map<UsuarioDto>(usuario); // ✅ dto ya tendrá UsuarioId
+            // 🔹 Guardar todos los cambios en una sola llamada
+            await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            // 🔹 Mapear a DTO de respuesta
+            var dto = _mapper.Map<UsuarioDto>(usuario);
 
             return ResponseHelper.Success(dto, "Usuario creado correctamente", HttpStatusCode.Created);
         }
         catch (Exception ex)
         {
-            return ResponseHelper.FailException<UsuarioDto>(ex);
+            _logger.LogError(ex, "Error al crear usuario en CrearUsuarioAsync");
+            return ResponseHelper.Fail<UsuarioDto>(
+                "Ocurrió un error procesando los datos del usuario.",
+                "Usuario",
+                HttpStatusCode.BadRequest
+            );
         }
     }
+
 
 
     public async Task<ApiResponse<object>> EliminarUsuarioAsync(int id)
